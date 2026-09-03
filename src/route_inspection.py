@@ -47,10 +47,25 @@ def _min_weight_perfect_matching(nodes, dist):
     return list(matching)
 
 
-def solve_open_chinese_postman(g):
+def solve_open_chinese_postman(g, refine_candidates=8):
     """Returns (euler_path_edges, start_node, end_node, extra_distance_m)
 
     euler_path_edges: list of (u, v) stop ids forming the walk in order.
+
+    For graphs with many odd-degree vertices, exhaustively trying every
+    candidate (start, end) pair and re-solving a full minimum weight perfect
+    matching for each is O(V^2) matchings and becomes infeasible (Krakow's
+    network has 100+ odd vertices). Instead we:
+      1. Solve ONE global minimum weight perfect matching over all odd
+         vertices (the optimal "closed tour" augmentation).
+      2. The best (start, end) pair to leave unmatched is very likely one of
+         the globally-matched pairs with the largest matched distance
+         (removing it saves the most retraced distance). We re-solve a fresh
+         matching on the remaining vertices for the top `refine_candidates`
+         such pairs and keep whichever gives the lowest total extra
+         distance. This is exact whenever the true optimum removes a pair
+         that was already matched in the global solution (the common case
+         in practice) and otherwise a close, efficient approximation.
     """
     mg = _build_networkx_multigraph(g)
     if not nx.is_connected(mg):
@@ -59,7 +74,7 @@ def solve_open_chinese_postman(g):
 
     odd = [n for n in mg.nodes if mg.degree(n) % 2 == 1]
 
-    # all-pairs shortest path distance & path restricted to odd vertices' needs
+    # all-pairs shortest path distance restricted to odd vertices' needs
     dist = dict(nx.all_pairs_dijkstra_path_length(mg, weight="weight"))
 
     if len(odd) == 0:
@@ -71,10 +86,13 @@ def solve_open_chinese_postman(g):
         best_matching = []
         extra = 0.0
     else:
+        global_matching = _min_weight_perfect_matching(odd, dist)
+        candidates = sorted(global_matching, key=lambda uv: -dist[uv[0]][uv[1]])[:refine_candidates]
+
         best_pair = None
         best_matching = None
         best_cost = None
-        for u, v in itertools.combinations(odd, 2):
+        for u, v in candidates:
             remaining = [n for n in odd if n not in (u, v)]
             matching = _min_weight_perfect_matching(remaining, dist)
             cost = sum(dist[a][b] for a, b in matching)

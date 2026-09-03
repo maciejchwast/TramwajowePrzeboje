@@ -3,11 +3,45 @@ line to board, and at which stop to change to a different line.
 """
 
 
-def _choose_line(prev_line, lines_serving_edge):
-    """Prefer staying on the current line if it also serves this edge."""
-    if prev_line is not None and prev_line in lines_serving_edge:
-        return prev_line
-    return sorted(lines_serving_edge)[0]
+def _assign_lines_minimizing_transfers(candidates):
+    """Given, for each edge in the walk (in order), the set of line refs that
+    serve it, choose one line per edge minimizing the number of times the
+    chosen line changes between consecutive edges.
+
+    This is solved exactly with a simple DP: dp[i][line] = minimum
+    transfers among any valid assignment of edges 0..i that ends edge i on
+    `line`. At each step a line can either continue from itself at i-1
+    (free) or switch from whichever line was cheapest at i-1 (+1 transfer).
+    """
+    n = len(candidates)
+    dp_prev = {line: 0 for line in candidates[0]}
+    parent = [None] * n
+    parent[0] = {line: None for line in candidates[0]}
+
+    for i in range(1, n):
+        min_prev_line = min(dp_prev, key=dp_prev.get)
+        min_prev_cost = dp_prev[min_prev_line]
+        dp_cur = {}
+        parent[i] = {}
+        for line in candidates[i]:
+            continue_cost = dp_prev.get(line, float("inf"))
+            switch_cost = min_prev_cost + 1
+            if continue_cost <= switch_cost:
+                dp_cur[line] = continue_cost
+                parent[i][line] = line
+            else:
+                dp_cur[line] = switch_cost
+                parent[i][line] = min_prev_line
+        dp_prev = dp_cur
+
+    best_line = min(dp_prev, key=dp_prev.get)
+    assignment = [None] * n
+    line = best_line
+    for i in range(n - 1, -1, -1):
+        assignment[i] = line
+        line = parent[i][line]
+
+    return assignment
 
 
 def build_itinerary(g, euler_edges):
@@ -15,13 +49,14 @@ def build_itinerary(g, euler_edges):
         {"line": ref, "stops": [stop_id, ...]}
     Consecutive legs on a different line represent a transfer at the shared stop.
     """
+    candidates = [g.edge(a, b)["lines"] for a, b in euler_edges]
+    line_per_edge = _assign_lines_minimizing_transfers(candidates)
+
     legs = []
     current_line = None
     current_stops = []
 
-    for a, b in euler_edges:
-        lines_here = g.edge(a, b)["lines"]
-        line = _choose_line(current_line, lines_here)
+    for (a, b), line in zip(euler_edges, line_per_edge):
         if line != current_line:
             if current_stops:
                 legs.append({"line": current_line, "stops": current_stops})
